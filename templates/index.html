@@ -217,7 +217,7 @@
         <span class="pill">Season {{ year }}</span>
       </h1>
       <p class="subtitle">Top player in each category. Switch seasons to see who led specific stats.</p>
-      <form class="controls" method="get" action="/">
+      <form class="controls" method="get" action="{{ url_for('index') }}">
         <label for="year">Season</label>
         <select id="year" name="year" onchange="this.form.submit()">
           {% for y in years %}
@@ -238,15 +238,7 @@
           <span class="chevron">View »</span>
           <hr class="divider" />
           <div class="leader">{{ row.player_name }}</div>
-          <div class="value">
-            {% if row.stat_label == "Money Earned" %}
-              {{ row.value }}
-            {% elif row.value is number %}
-              {{ "%.3f"|format(row.value) }}
-            {% else %}
-              {{ row.value }}
-            {% endif %}
-          </div>
+          <div class="value">{{ row.value }}</div>
         </a>
         {% endfor %}
       </div>
