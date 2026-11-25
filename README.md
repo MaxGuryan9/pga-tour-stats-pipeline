@@ -75,7 +75,7 @@ flowchart LR
 ### Project Structure
 
 ```
-ds2022-pga-golf/
+pga-tour-stats-pipeline/
 ├── src/
 │   ├── config.py           # Paths, seasons, port, and the stat catalog
 │   ├── download_stats.py   # Extract: download raw CSVs
@@ -119,8 +119,8 @@ The default seasons are 2022–2025, which gives about 1,000 player-season rows.
 Requires Docker.
 
 ```bash
-git clone https://github.com/MaxGuryan9/ds2022-pga-golf.git
-cd ds2022-pga-golf
+git clone https://github.com/MaxGuryan9/pga-tour-stats-pipeline.git
+cd pga-tour-stats-pipeline
 ./run.sh
 ```
 

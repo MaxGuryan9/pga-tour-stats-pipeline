@@ -17,8 +17,8 @@ fi
 
 PORT="${PORT:-8000}"
 PGA_YEARS="${PGA_YEARS:-2022-2025}"
-IMAGE="pga-stats"
-CONTAINER="pga-stats"
+IMAGE="pga-tour-stats-pipeline"
+CONTAINER="pga-tour-stats-pipeline"
 HEALTH_TIMEOUT=30  # seconds
 
 if lsof -tiTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
