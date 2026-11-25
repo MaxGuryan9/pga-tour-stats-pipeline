@@ -13,3 +13,5 @@ data/processed/
 .DS_Store
 .vscode/
 .idea/
+README_files/
+.pytest_cache/

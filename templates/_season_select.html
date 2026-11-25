@@ -1,0 +1,10 @@
+{# Season dropdown. Submits to the current page with ?year=<season>. #}
+<form class="controls" method="get" action="{{ request.path }}">
+  <label for="year">Season</label>
+  <select id="year" name="year" onchange="this.form.submit()">
+    {% for y in years %}
+    <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit">Go</button></noscript>
+</form>

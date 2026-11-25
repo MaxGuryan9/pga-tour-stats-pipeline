@@ -1,197 +1,189 @@
-# PGA TOUR Stats Pipeline & Flask Dashboard
+# PGA TOUR Stats Pipeline
 
-## 1. Executive Summary
-### Problem
-The PGA Tour collects statistical data (strokes gained, driving distance, scoring, ranking, etc.), which is displayed on the PGA TOUR website. Many analysts and fans want to compare player performance throughout a season, across different seasons, or view category leaders, which is displayed on their website. However, the data, which is publicly available, is spread across multiple separate CSV endpoints, making it hard to obtain a complete dataset of all stats collected on the PGA Tour for a given season or range of seasons.
-### Solution
-This project builds a fully containerized data pipeline and Flask dashboard. Through this pipeline, raw CSV files are downloaded, the data is cleaned and normalized, and then merged into two different master datasets. One is a dataset with all statistical categories during a given season, and the other is a dataset with all statistical categories over a range of seasons. This data is displayed through a dashboard, allowing a fan or analyst to toggle between seasons and see which player leads in each category during that specific season or see a ranked list of all players during a given season in a specified category. Despite the dashboard's simplicity, it is a proof-of-concept that shows we now have all the data in one place. This entire containerized system can be run with a single pipeline command `./run.sh`.
+A containerized ETL pipeline that collects PGA TOUR player statistics from dozens of separate CSV endpoints, cleans and merges them into one analysis-ready dataset, and serves it through a Flask dashboard. One command builds, tests and starts everything.
 
-## 2. System Overview
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![pandas](https://img.shields.io/badge/pandas-2.2-150458?logo=pandas&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.0-000000?logo=flask&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-containerized-2496ED?logo=docker&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-24_tests-0A9EDC?logo=pytest&logoColor=white)
 
-### Concept(s)/Tool(s) Used:
-- Data pipelines
-- Flask API
-- Docker Containerization
-- Smoke Testing and Health Checks
+![Dashboard](assets/dashboard.png)
 
-### Architecture Diagrams
+## Contents
 
-#### Pipeline
-![Pipeline Diagram](assets/pipeline.png)
-This pipeline shows the steps taken when you run the `./run.sh` command and interact with the dashboard. 
+- [Overview](#overview)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [Data](#data)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Design Decisions](#design-decisions)
+- [Future Work](#future-work)
+- [About](#about)
 
-#### Project Folder Tree
+## Overview
+
+**What it does.** The PGA TOUR publishes season statistics such as strokes gained, driving distance, scoring average and money earned, but each stat for each season is a separate CSV download. That makes it hard to look at a player's whole profile or compare seasons. This project pulls all of those files and combines them into one dataset with one row per player per season.
+
+**How it works.** A three-stage pipeline runs inside the Docker build:
+1. **Extract** (`download_stats.py`): downloads 11 stats for each configured season from the PGA TOUR stats API.
+2. **Transform** (`parse_stats.py`): detects each file's player and value columns, cleans formatting (`$`, `%`, `,`), and handles malformed rows in the source data.
+3. **Load** (`build_master.py`): outer-joins every stat per season so no player is dropped, computes the derived *Strokes Gained: Tee to Green* metric, and writes per-season and combined master CSVs.
+
+A pytest suite then validates the dataset and the app before the image finishes building. A Flask app served by gunicorn shows the leader in each stat by season, and you can click any stat for the full ranked leaderboard.
+
+**What was built.**
+- An end-to-end ETL pipeline driven by a single config module (`src/config.py`). Adding a stat or a season is a one-line change.
+- Column detection that tolerates inconsistent headers across seasons, including a known header/column mismatch in the 2023+ FedEx files.
+- A dashboard with shared Jinja templates and a single stylesheet.
+- 24 automated tests that gate the Docker build.
+- A one-command launcher (`run.sh`) with a health check and clean shutdown.
+
+## Tech Stack
+
+| Layer | Tools |
+|---|---|
+| Language | Python 3.12 |
+| Data processing | pandas |
+| Data source | PGA TOUR stats CSV API, via `requests` |
+| Web app | Flask, Jinja2, HTML/CSS |
+| App server | gunicorn |
+| Containerization | Docker |
+| Testing | pytest |
+| Automation | Bash (`run.sh`) |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph build["Docker build"]
+        A["download_stats.py<br/>raw CSVs"] --> B["parse_stats.py<br/>normalized per-stat CSVs"]
+        B --> C["build_master.py<br/>master_player_seasons.csv"]
+        C --> T["pytest<br/>data + app tests"]
+    end
+    subgraph run["Container runtime"]
+        D["Flask app<br/>(gunicorn)"]
+    end
+    T --> D
+    D --> E["/ : stat leaders by season"]
+    D --> F["/category/#60;stat#62; : full leaderboard"]
+    D --> G["/health"]
 ```
-ds2022-pga-golf/
-│
-├── Dockerfile                   # Defines build-run environment; runs the pipeline
-├── run.sh                       # One-command build + run (no cache)
-├── requirements.txt             # Python dependencies
-├── README.md                    # Full project write-up
-├── LICENSE                      # MIT license
-├── .gitignore                   # Excludes local env + data dirs
-├── .env.example                 # Example environment variables (no secrets)
-│
-├── assets/                      # Static documentation assets
-│   ├── pipeline.png             # Pipeline diagram
-│   ├── dashboard.png            # Screenshot of dashboard
-│   ├── second_dashboard.png     # NEW: Secondary dashboard screenshot
-│   ├── app_test.png             # NEW: Screenshot for app smoke test
-│   ├── data_test.png            # NEW: Screenshot for data pipeline test
-│
-├── src/                         # All application + pipeline code
-│   ├── app.py                   # Flask server
-│   ├── download_stats.py        # Download raw PGA stats
-│   ├── parse_stats.py           # Normalize + clean data
-│   ├── build_master.py          # Merge into master dataset
-│
-├── templates/
-│   ├── index.html               # Dashboard page template (Jinja2)
-│   └── category.html            # Category-specific page template
-│
-├── tests/                       # Smoke tests (pytest)
-│   ├── test_data.py             # Dataset validation tests
-│   └── test_app.py              # Flask app tests
-│
-└── data/                        # Created only inside Docker container
-    ├── raw/                     # Raw CSVs from PGA API
-    ├── intermediate/            # Cleaned intermediate CSVs
-    └── processed/               # Final master_player_seasons.csv
+
+### Project Structure
 
 ```
+pga-tour-stats-pipeline/
+├── src/
+│   ├── config.py           # Paths, seasons, port, and the stat catalog
+│   ├── download_stats.py   # Extract: download raw CSVs
+│   ├── parse_stats.py      # Transform: normalize each stat file
+│   ├── build_master.py     # Load: merge into master datasets
+│   └── app.py              # Flask dashboard
+├── templates/              # Jinja templates (base, overview, category)
+├── static/css/style.css    # Dashboard styles
+├── tests/                  # pytest: dataset and app tests
+├── assets/                 # README screenshots
+├── Dockerfile              # Builds the image; runs pipeline + tests
+├── run.sh                  # Build, start, health-check, stream logs
+├── requirements.txt
+├── .env.example            # PORT and PGA_YEARS
+└── data/                   # Generated at build time (not committed)
+    ├── raw/
+    ├── intermediate/
+    └── processed/
+```
 
-#### Data Sources
-All PGA Data came from the PGA's official CSV API:
+## Data
+
+**Source:** the PGA TOUR's public CSV endpoint:
 ```
 https://www.pgatour.com/api/stats-download?timePeriod=THROUGH_EVENT&tourCode=R&statsId=<ID>&year=<YEAR>
 ```
 
-#### Stats Included
-- Strokes Gained (Total, OTT, Approach, ARG, Putting)
-- Driving Distance
-- Driving Accuracy
-- Greens in Regulation
-- Scoring Average
-- Money Earned
-- FedEx-style Season Rank
-- Derived: Strokes Gained Tee-to-Green (Strokes Gained Total excluding Putting)
-#### Data Credits
-This project uses publicly available PGA TOUR data exclusively for educational and non-commercial use.
-All PGA data is © PGA TOUR
+**Stats collected** (defined in [`src/config.py`](src/config.py)):
 
-## 3. How to Run with Docker (Local)
-In your terminal paste:
+| Category | Stats |
+|---|---|
+| Strokes Gained | Total, Off the Tee, Approach, Around the Green, Putting |
+| Traditional | Driving Distance, Driving Accuracy, Greens in Regulation, Scoring Average |
+| Outcomes | Money Earned, FedExCup Season Rank |
+| Derived | Strokes Gained: Tee to Green (Off the Tee + Approach + Around the Green) |
+
+The default seasons are 2022–2025, which gives about 1,000 player-season rows.
+
+## Quick Start
+
+Requires Docker.
+
 ```bash
+git clone https://github.com/MaxGuryan9/pga-tour-stats-pipeline.git
+cd pga-tour-stats-pipeline
 ./run.sh
 ```
-This runs `run.sh` which contains:
+
+Then open http://localhost:8000. The first build downloads the data and takes about a minute. Press `Ctrl+C` to stop.
+
+Clicking any card opens the full ranked leaderboard for that stat:
+
+![Category leaderboard](assets/second_dashboard.png)
+
+## Configuration
+
+Set these in a `.env` file (see [`.env.example`](.env.example)) or inline:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `8000` | Host port for the dashboard |
+| `PGA_YEARS` | `2022-2025` | Seasons to download: a range (`2019-2025`) or a list (`2021,2023,2025`) |
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-PORT="${PORT:-8000}"
-
-echo "Ensuring port ${PORT} is free..."
-if lsof -tiTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Port ${PORT} in use. Attempting to terminate listener(s)..."
-  pids=$(lsof -tiTCP:"${PORT}" -sTCP:LISTEN)
-  kill ${pids}
-  sleep 1
-fi
-
-if lsof -tiTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Port ${PORT} is still in use. Please free it manually and rerun." >&2
-  exit 1
-fi
-
-echo "Building image..."
-docker build -t pga-stats:latest .
-
-echo "Starting container on port ${PORT}..."
-docker run --rm -p "${PORT}:8000" pga-stats:latest
-
-echo "Health check..."
-curl "http://localhost:${PORT}/health"
+PGA_YEARS=2019-2025 PORT=8080 ./run.sh
 ```
-Note: Additional Code was added to ensure that port 8000 is killed if used before running the Dockerfile.
 
-## 4. Design Decisions
-### Why this concept?
-There were certain limitations to how I would be able to download the CSV files because I needed to compile multiple CSVs, make sure they were all formatted the right way, and merge them together without losing data. With these parameters in mind, there were only a few options that I had. First, instead of using the PGA TOUR CSV API, I could've scraped the PGA TOUR webpages to collect stats, but this method is weak and violates the PGA TOUR's rules and regulations. Scraping webpages is brittle because one small change in the HTML script of the website can break the code, forcing you to parse through the HTML script, find the change(s), and adjust the code accordingly. Using the PGA TOUR CSV API is preferred because it returns a readable CSV file; API endpoint changes are significantly less frequent than webpage HTMLs, making it less likely that the code will break. Looking bigger picture, this method is a better fit for reproducible Docker builds, which is a key component of this project. Another concept that could've been used was SQLite. A SQLite database could've been created housing tables like `raw_stats`, `intermediate_stats`, and `master_stats`. The downloaded CSVs would be inserted into the database, and SQL queries could've been used to complete all of the functions that Pandas completed. This could've been a viable option, but it comes with unnecessary overhead for a project of this size. The master CSV file is only about 1000 rows, which is relatively small. If the CSV file were larger, SQLite would've been a better choice, but in this instance, there was added complexity and no added efficiency. Next, a Flask App was used to create the dashboard because that was the only method we learned. I am sure that there are other ways to end up with the same dashboard, or something better, but I decided to stick with what I was familiar with, as this is my first project of this size. Finally, Docker was chosen over Apptainer as the method of containerization because this project runs locally instead of on an HPC cluster. Docker is pretty standard for use cases like this. However, if this project were to be done on UVA's HPC cluster, then Apptainer would be a better choice because it is a very effective containerization method for rootless multi-user systems like HPC clusters. 
+## Testing
 
-### Tradeoffs
-#### Build-time vs runtime pipeline
-I chose to run `download_stats.py`, `parse_stats.py`, and `build_master.py` inside the Docker build. This was done because it allows anyone to run the `run.sh` pipeline in its entirety on any device or OS. The size of the git repo is smaller because no CSV files are housed inside it, which leads to slow clones. Additionally, running these scripts inside the Docker build allows for one singular command to initiate and complete the entire project. One major tradeoff of this is that the time to build the Docker image and the size of the Docker image are increased. However, for this project, the size of the dataset is relatively small, so this increase is relatively inconsequential.
-#### Simplicity
-As I mentioned above, I chose to use a Flask App for the frontend dashboard. Flask Apps are great because they have a very low level of complexity, which makes it easier for me to create. This also keeps the focus on the data-pipeline aspect of this project, which is the main goal of this project. There are downsides to this choice. On the users end, the dashboard is less interactive and oversimplified. I made this choice because Flask Apps were the only thing that we had worked with so far. This was my first project of this magnitude and I tried to keep things as simple as possible.  
-
-### Security and Privacy
-#### Data Sensitivity and privacy
-There is no handling of private or sensitive user data in this project. The dataset consists completely of public performance statistics of professional golfers.
-- All data comes from a public source: PGA TOUR stats
-- There are no user accounts
-- There is no need for PII since all information in public
-  
-#### Secrets and environment variables
-I have included `.env.example` and `.gitignore` which will keep secrets out of the repo. However, the current project does not require things like API keys, so there are no secrets. 
-
-
-## 5. Results and Evaluation
-### Testing and Validation
-There are two external testing python scripts, `test_data.py` and `test_app.py`. Each of which helps catch early issues and acts as a health check for the entire pipeline. These tests can be found in the `tests` folder. 
-
-#### Data Tests
-- Verifies the existence and non-emptiness of the data set
-- Confirms the presence of expected columns
-- Ensures all expected years are included
-- Confirms correctness of the derived metric `sg_tee_to_green`
-Run this in your terminal:
-```bash
-pytest test_data.py
-```
-If the test was successful, this is the message you should receive in your terminal:
-![Data Test](assets/data_test.png)
-If there are errors, you will receive a message pinpointing what and where the error is.
-
-#### App Test
-- Confirms that the homepage loads with HTTP 200
-- Verifies that season-specific routes return valid responses
-- Ensures no unexpected server errors occurred
-Run this in your terminal
+The tests run automatically during `docker build`, so the image will not build if any test fails. To run them locally:
 
 ```bash
-pytest test_app.py
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m src.download_stats && python -m src.parse_stats && python -m src.build_master
+pytest
 ```
 
-If the test was successful, this is the message you should receive in your terminal:
-![App Test](assets/app_test.png)
-If there are errors, you will receive a message pinpointing what and where the error is.
+| Suite | Checks |
+|---|---|
+| `tests/test_data.py` | Master dataset exists, has the expected columns in order, covers every configured season, has no duplicate player-seasons, and the derived metric matches its components |
+| `tests/test_app.py` | Every season and every stat page returns 200; unknown seasons and stats return 404; the health endpoint and stylesheet respond |
 
-### Primary Dashboard  
-![Dashboard](assets/dashboard.png)
-After running the `run.sh` pipeline and clicking on the local host port, this is what the dashboard should look like.
+## Design Decisions
 
-### Secondary Dashboard
-![Second Dashboard](assets/second_dashboard.png)
-If you want to inspect the entire list of players, ranked from best to worst, on a given stat in a given year, click on the icon and this is an example of what will show up.
+**CSV API over web scraping.** Scraping the stats pages would depend on HTML structure, which can change without notice. The CSV endpoint returns structured data, changes far less often, and keeps the Docker build reproducible.
 
-### Health Check
-After running the `run.sh` pipeline, open a new terminal, cd into `ds2022-pga-golf` and run the following code:
-```bash
-curl http://localhost:8000/health
-```
-You should get a response like the one below. This means that the Flask App dashboard is running.
-```json
-{"status":"ok"}
-```
-## 6. What's Next
-This project is very simple, meaning that there are many ways that we can make this more complex. Starting on the dataset pipeline side, adding more years to the master_dataset would enhance this project. In order to keep this project's image relatively small, only use data from 2022-2025 was included. Expanding the dataset to include values from years prior to 2022 creates a more comprehensive dataset that could be used to analyze the relationship between a golfer's success and the part(s) of their game that are better than the rest. On the Flask App dashboard side of this project, giving users the ability to compare two players across all metrics would add complexity and practicality to this project. Continuing on with the idea that this dataset could be used to show the relationship between a golfer's success and the part(s) of their game that are better than the rest. The success of a golfer could be quantified through either money earned or points earned and compared to each specific strokes gained (SG) category. After EDA (exploratory data analysis), regression models, and potentially predictive models, this data could be used to determine the likelihood of a players success based on the their performance in each SG category. 
+**pandas over a database.** The master dataset is about 1,000 rows. SQLite would add schema and query overhead without a performance benefit at this size. A database becomes the better choice if the project expands to many more seasons or to round-level data.
 
-## 7. Links
-**GitHub Repo:** [link](https://github.com/MaxGuryan9/ds2022-pga-golf)
+**Pipeline at build time, not run time.** Running the pipeline inside `docker build` means the image ships with its data and starts instantly, and anyone can reproduce the full dataset with one command. The repo stores no data files. The trade-off is a longer build and a larger image, which is acceptable at this data size.
 
-## 8. License and Credits
+**Tests as a build gate.** Running pytest in the Dockerfile means a change in the upstream data (renamed columns, a missing season) fails the build instead of producing a broken dashboard.
 
-OpenAI. (2025). ChatGPT (GPT-5.1) [Large language model].
-Retrieved from https://chat.openai.com/
+**One config module.** Every stat's API ID, output column, display label, sort direction and format lives in one list in `src/config.py`. The pipeline, the dashboard and the tests all read from it, so they cannot drift apart.
+
+**Flask and Docker.** Flask keeps the presentation layer small so the focus stays on the data pipeline. Docker was chosen over Apptainer because the project targets local machines rather than a shared HPC cluster.
+
+**Security and privacy.** All data is public performance statistics. There are no user accounts, no personal data and no secrets. `.env` is gitignored, and `.env.example` documents the non-secret settings.
+
+## Future Work
+
+- **More history:** extend the default seasons back before 2022 (already supported through `PGA_YEARS`).
+- **Player comparison:** a view that compares two players across every stat.
+- **Modeling:** regress earnings or FedExCup rank on the strokes-gained components to estimate which parts of the game best predict success.
+- **CI:** run the test suite on every push with GitHub Actions.
+
+## About
+
+Built by Max Guryan. It started as a project for DS 2022 at the University of Virginia and was later refactored and extended. AI assistants (ChatGPT, Claude) were used for help with code and documentation.
+
+All PGA TOUR data © PGA TOUR, used here for educational, non-commercial purposes. Code released under the [MIT License](LICENSE).
