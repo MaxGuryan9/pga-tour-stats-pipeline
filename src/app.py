@@ -11,7 +11,11 @@ from flask import Flask, jsonify, render_template, request
 
 from src import config
 
-app = Flask(__name__, template_folder=str(config.PROJECT_ROOT / "templates"))
+app = Flask(
+    __name__,
+    template_folder=str(config.PROJECT_ROOT / "templates"),
+    static_folder=str(config.PROJECT_ROOT / "static"),
+)
 
 if not config.MASTER_PATH.exists():
     raise FileNotFoundError(
